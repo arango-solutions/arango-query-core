@@ -13,7 +13,8 @@ the engine was carved out of ``arango_cypher.nl2cypher`` (see
 3. the syntax validator,
 4. the repair rules keyed on validator errors,
 5. the guardrail checks (e.g. tenant-scope AST validation),
-6. the entity/instance grounding index.
+6. the entity/instance grounding index,
+7. the predicate/schema-convention grounding index.
 
 Adapters live NEXT TO their transpilers (``arango_cypher.nl2cypher``,
 ``arango_sparql.nl2sparql``), never in this package: validating a
@@ -29,7 +30,7 @@ from dataclasses import dataclass, field
 from typing import Any, Protocol, runtime_checkable
 
 from .fewshot import FewShotIndex
-from .grounding import LabelIndex
+from .grounding import LabelIndex, PredicateIndex
 
 
 @dataclass
@@ -119,4 +120,19 @@ class QueryLanguageAdapter(Protocol):
         return the empty string to inject nothing. Adapter-owned so the
         wording stays language-specific while the retrieval/rendering
         machinery lives in :class:`LabelIndex`."""
+        ...
+
+    def predicate_index(self) -> PredicateIndex | None:
+        """Seam 7 — the pre-built TBox predicate index for this
+        request's target schema, or ``None`` to run ungrounded (mirrors
+        seam 6)."""
+        ...
+
+    def predicate_prompt_section(self, question: str, index: PredicateIndex, k: int = 20) -> str:
+        """Seam 7 (renderer) — turn the retrieved predicate ``index``
+        into the language-specific predicate/schema-convention usage
+        cheat-sheet prompt block. The engine calls this only when
+        :meth:`predicate_index` returns a non-``None`` index; return the
+        empty string to inject nothing. Adapter-owned wording; the
+        retrieval/rendering machinery lives in :class:`PredicateIndex`."""
         ...

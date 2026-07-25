@@ -59,13 +59,17 @@ class NLQueryEngine:
     schema) stays cacheable across questions. ``grounding_k`` entities
     are likewise retrieved per question from the adapter's grounding
     index (seam 6) and rendered after the few-shot section — also
-    post-cache-boundary, per-question dynamic content.
+    post-cache-boundary, per-question dynamic content. ``predicate_k``
+    predicates are retrieved per question from the adapter's predicate
+    index (seam 7) and rendered AFTER the entity section — same
+    post-cache-boundary, per-question dynamic content discipline.
     """
 
     provider: LLMProvider
     adapter: QueryLanguageAdapter
     few_shot_k: int = 3
     grounding_k: int = 20
+    predicate_k: int = 20
     max_retries: int = 2
     guardrail_context: dict[str, Any] = field(default_factory=dict)
 
@@ -127,6 +131,13 @@ class NLQueryEngine:
             block = self.adapter.grounding_prompt_section(question, grounding, k=self.grounding_k)
             if block:
                 sections.append(block)
+        predicates = self.adapter.predicate_index()
+        if predicates is not None:
+            pred_block = self.adapter.predicate_prompt_section(
+                question, predicates, k=self.predicate_k
+            )
+            if pred_block:
+                sections.append(pred_block)
         return "\n\n".join(s for s in sections if s)
 
 

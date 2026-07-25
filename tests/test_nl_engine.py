@@ -8,9 +8,11 @@ from typing import Any
 
 from arango_query_core.nl import (
     GroundedEntity,
+    GroundedPredicate,
     GuardrailVerdict,
     LabelIndex,
     NLQueryEngine,
+    PredicateIndex,
     ValidationResult,
 )
 from arango_query_core.nl.fewshot import FewShotIndex, _NoopRetriever
@@ -50,6 +52,9 @@ class FakeAdapter:
         return FewShotIndex(_NoopRetriever(), examples=[])
 
     def grounding_index(self):
+        return None
+
+    def predicate_index(self):
         return None
 
     def validate(self, query: str) -> ValidationResult:
@@ -154,3 +159,54 @@ def test_engine_composes_grounding_block() -> None:
     assert GroundedFakeAdapter._SENTINEL_LABEL in system
     # Grounding lands AFTER the grammar/few-shot sections.
     assert system.index("## Grammar") < system.index("## Known entities")
+
+
+class PredicateGroundedFakeAdapter(GroundedFakeAdapter):
+    """GroundedFakeAdapter + a populated predicate index (seam 7)."""
+
+    _SENTINEL_PREDICATE_LABEL = "pv:sentinelPredicateXYZ123"
+
+    def predicate_index(self) -> PredicateIndex | None:
+        return PredicateIndex.from_items(
+            [
+                GroundedPredicate(
+                    iri="http://ex.org/pv/sentinelPredicateXYZ123",
+                    label=self._SENTINEL_PREDICATE_LABEL,
+                    kind="datatype",
+                    domain="Widget",
+                    range="xsd:string",
+                    shape="literal",
+                )
+            ]
+        )
+
+    def predicate_prompt_section(self, question: str, index: PredicateIndex, k: int = 20) -> str:
+        return index.format_prompt_section(
+            question,
+            k=k,
+            header="## Known schema predicates",
+            instruction="Use only these predicates.",
+        )
+
+
+def test_engine_composes_predicate_block_after_entities() -> None:
+    provider = FakeProvider(["SELECT ?s WHERE { ?s ?p ?o }"])
+    adapter = PredicateGroundedFakeAdapter()
+    engine = NLQueryEngine(provider=provider, adapter=adapter, grounding_k=20, predicate_k=20)
+    engine.generate(
+        f"find the {GroundedFakeAdapter._SENTINEL_LABEL} "
+        f"{PredicateGroundedFakeAdapter._SENTINEL_PREDICATE_LABEL}"
+    )
+    system = provider.calls[0][0]
+    assert "## Known schema predicates" in system
+    assert PredicateGroundedFakeAdapter._SENTINEL_PREDICATE_LABEL in system
+    # Ordering: grammar -> few-shot -> entities -> predicates, all post-cache-boundary.
+    assert system.index("## Grammar") < system.index("## Known entities")
+    assert system.index("## Known entities") < system.index("## Known schema predicates")
+
+    # D-07 cache-boundary: the predicate block must never leak into the
+    # cacheable grammar_prompt_section (static prefix), same rule seam 6
+    # already obeys.
+    standalone_prompt = adapter.grammar_prompt_section("")
+    assert PredicateGroundedFakeAdapter._SENTINEL_PREDICATE_LABEL not in standalone_prompt
+    assert "## Known schema predicates" not in standalone_prompt
