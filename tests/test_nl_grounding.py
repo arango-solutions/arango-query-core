@@ -181,10 +181,7 @@ def test_predicate_format_returns_empty_on_no_match() -> None:
     assert PredicateIndex([]).format_prompt_section("anything", header="## H", instruction="I") == ""
 
     index = PredicateIndex([_literal_predicate()])
-    assert (
-        index.format_prompt_section("no shared tokens whatsoever", header="## H", instruction="I")
-        == ""
-    )
+    assert index.format_prompt_section("no shared tokens whatsoever", header="## H", instruction="I") == ""
 
 
 def test_predicate_format_terse_line_for_linked_entity_no_expansion() -> None:

@@ -133,9 +133,7 @@ class NLQueryEngine:
                 sections.append(block)
         predicates = self.adapter.predicate_index()
         if predicates is not None:
-            pred_block = self.adapter.predicate_prompt_section(
-                question, predicates, k=self.predicate_k
-            )
+            pred_block = self.adapter.predicate_prompt_section(question, predicates, k=self.predicate_k)
             if pred_block:
                 sections.append(pred_block)
         return "\n\n".join(s for s in sections if s)
