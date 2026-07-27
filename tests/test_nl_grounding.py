@@ -170,11 +170,87 @@ def test_predicate_retrieve_scores_domain_and_range_tokens_too() -> None:
     assert index.retrieve("what is the price of the product") == [predicate]
 
 
+def test_predicate_retrieve_k_alone_does_not_dump_zero_hit_predicates() -> None:
+    # CR-01 regression: widening k to the full predicate count is NOT dump
+    # mode -- the shared scorer's `if hits:` filter drops every zero-overlap
+    # predicate regardless of k. A question that shares zero label/domain/
+    # range tokens with any predicate must retrieve nothing, even at
+    # k=len(predicates).
+    predicates = [_price_predicate(), _category_predicate(), _linked_predicate(), _literal_predicate()]
+    index = PredicateIndex(predicates)
+    matches = index.retrieve("completely unrelated question text zzz", k=len(predicates))
+    assert matches == []
+
+
+def test_predicate_retrieve_dump_true_returns_every_predicate_regardless_of_hits() -> None:
+    # The real dump contract (CR-01 fix): dump=True bypasses the zero-hit
+    # filter entirely, so a question that token-matches NONE of the
+    # predicates still gets every predicate back (ranked with the
+    # zero-overlap ones last, since scored.sort is stable on (hits, -best_len)
+    # and hits=0 sorts after any real hit).
+    predicates = [_price_predicate(), _category_predicate(), _linked_predicate(), _literal_predicate()]
+    index = PredicateIndex(predicates)
+    matches = index.retrieve("completely unrelated question text zzz", k=len(predicates), dump=True)
+    assert len(matches) == len(predicates)
+    assert set(matches) == set(predicates)
+
+    # dump=True with a k SMALLER than the full set still truncates -- dump
+    # only removes the zero-hit filter, it does not override k as a cap.
+    truncated = index.retrieve("completely unrelated question text zzz", k=2, dump=True)
+    assert len(truncated) == 2
+
+    # A question that DOES token-match some predicates ranks the matching
+    # ones first even in dump mode (hits desc is still the sort key).
+    ranked = index.retrieve("what is the price of the product", k=len(predicates), dump=True)
+    assert ranked[0] == predicates[0]  # _price_predicate() -- the only real hit
+    assert len(ranked) == len(predicates)  # the rest still present, just ranked after
+
+
 def test_predicate_retrieve_k_dumps_all_when_k_covers_full_set() -> None:
+    # dump=False (default) still requires real overlap -- k merely caps the
+    # already-filtered candidate list. This is the corrected version of the
+    # CR-01-misleading prior assertion: it happened to pass only because
+    # every predicate in this fixture scores >=1 hit against this specific
+    # question, not because k alone can dump zero-hit predicates.
     predicates = [_price_predicate(), _category_predicate(), _linked_predicate(), _literal_predicate()]
     index = PredicateIndex(predicates)
     matches = index.retrieve("product price category manager name", k=len(predicates))
     assert len(matches) == len(predicates)
+
+
+def test_predicate_format_prompt_section_dump_true_renders_zero_hit_predicates() -> None:
+    predicates = [_price_predicate(), _category_predicate(), _linked_predicate(), _literal_predicate()]
+    index = PredicateIndex(predicates)
+    section = index.format_prompt_section(
+        "completely unrelated question text zzz",
+        k=len(predicates),
+        header="## Known schema predicates",
+        instruction="Use these.",
+        dump=True,
+    )
+    assert "pv:price" in section
+    assert "pv:hasCategory" in section
+    assert "pv:hasManager" in section
+    assert "pv:name" in section
+
+    # dump=False (default) on the same zero-overlap question renders nothing.
+    empty_section = index.format_prompt_section(
+        "completely unrelated question text zzz",
+        k=len(predicates),
+        header="## Known schema predicates",
+        instruction="Use these.",
+    )
+    assert empty_section == ""
+
+
+def test_label_index_retrieve_unaffected_by_dump_addition() -> None:
+    # LabelIndex/entity grounding (seam 6) must stay byte-behavior-identical
+    # -- it never passes dump, so _token_substring_retrieve's default
+    # dump=False keeps its zero-hit filter exactly as before.
+    entity = GroundedEntity(id="http://ex.org/x", labels=("Completely Unrelated",), type="")
+    index = LabelIndex([entity])
+    assert index.retrieve("no shared tokens here at all") == []
+    assert LabelIndex([]).retrieve("anything") == []
 
 
 def test_predicate_format_returns_empty_on_no_match() -> None:
