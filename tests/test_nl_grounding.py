@@ -199,9 +199,12 @@ def test_predicate_retrieve_dump_true_returns_every_predicate_regardless_of_hits
     truncated = index.retrieve("completely unrelated question text zzz", k=2, dump=True)
     assert len(truncated) == 2
 
-    # A question that DOES token-match some predicates ranks the matching
-    # ones first even in dump mode (hits desc is still the sort key).
-    ranked = index.retrieve("what is the price of the product", k=len(predicates), dump=True)
+    # A question that DOES token-match a predicate ranks the matching one
+    # first even in dump mode (hits desc is still the sort key). Deliberately
+    # omits "product" -- both _price_predicate and _category_predicate share
+    # domain="Product", which would give both a hit and make ranking depend
+    # on the shortest-label tiebreak rather than the thing under test here.
+    ranked = index.retrieve("what is the price", k=len(predicates), dump=True)
     assert ranked[0] == predicates[0]  # _price_predicate() -- the only real hit
     assert len(ranked) == len(predicates)  # the rest still present, just ranked after
 

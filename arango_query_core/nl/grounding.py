@@ -82,6 +82,8 @@ def _token_substring_retrieve(
     get_labels: Callable[[_T], tuple[str, ...]],
     question: str,
     k: int,
+    *,
+    dump: bool = False,
 ) -> list[_T]:
     """Top-k items whose ``get_labels(item)`` tokens appear (as
     substrings) in the question, or vice versa.
@@ -95,6 +97,18 @@ def _token_substring_retrieve(
     generalized over an item-type-agnostic ``get_labels`` accessor so
     both :class:`LabelIndex` (entity labels) and :class:`PredicateIndex`
     (predicate label/domain/range) share one scorer — not two.
+
+    ``dump`` (default ``False``) is CR-01's real dump-mode escape hatch:
+    when ``False``, an item scoring zero token hits against the question is
+    dropped regardless of ``k`` (today's behavior, unchanged -- this is
+    what :class:`LabelIndex` always gets, and what :class:`PredicateIndex`
+    gets by default). When ``True``, zero-hit items are ALSO appended to
+    ``scored`` (with ``hits=0``) instead of being dropped, so after the
+    same ``(hits, -best_len)`` sort they rank after every real match and
+    ``[:k]`` can return the full item list when ``k >= len(items)`` -- a
+    genuine "show me everything" dump, not merely a widened retrieval cap
+    (widening ``k`` alone can never add back a zero-hit item, since the
+    old ``if hits:`` guard dropped it before ``k`` was ever applied).
     """
     ql = question.lower()
     q_tokens = {t for t in re.findall(r"[a-z0-9]+", ql) if len(t) >= 3 and t not in _STOP}
@@ -109,7 +123,7 @@ def _token_substring_retrieve(
             h += sum(1 for t in q_tokens if t in labl and not any(t == lt for lt in lab_tokens))
             if h > hits:
                 hits, best_len = h, len(labl)
-        if hits:
+        if hits or dump:
             scored.append((hits, -best_len, item))
     scored.sort(key=lambda x: (x[0], x[1]), reverse=True)
     return [item for _, _, item in scored[:k]]
@@ -225,11 +239,15 @@ class PredicateIndex:
     matches. Retrieval reuses the SAME shared scorer
     (:func:`_token_substring_retrieve`) — not a second hand-rolled one.
 
-    ``retrieve``'s ``k`` only caps candidates; it does not decide
-    dump-vs-retrieve mode. When ``k >= len(predicates)`` every predicate
-    that scores at least one hit is returned (effectively "dump" for a
-    small schema) — the caller (adapter/eval-harness) is responsible for
-    choosing which ``k`` to pass based on schema size, mirroring
+    ``retrieve``'s ``k`` only caps candidates; it does NOT by itself decide
+    dump-vs-retrieve mode (CR-01 correction: widening ``k`` to
+    ``len(predicates)`` alone is a no-op against the shared scorer's
+    zero-hit filter — a predicate with no lexical overlap against the
+    question is dropped regardless of ``k``). Genuine dump mode is the
+    explicit ``dump=True`` keyword on :meth:`retrieve`/
+    :meth:`format_prompt_section`, which bypasses that filter and returns
+    every predicate. The caller (adapter/eval-harness) still owns choosing
+    which ``k``/``dump`` to pass based on schema size, mirroring
     :class:`LabelIndex`'s "no business logic in this class" ethos.
     """
 
@@ -240,13 +258,21 @@ class PredicateIndex:
     def from_items(cls, items: list[GroundedPredicate]) -> PredicateIndex:
         return cls(items)
 
-    def retrieve(self, question: str, k: int = 20) -> list[GroundedPredicate]:
+    def retrieve(self, question: str, k: int = 20, *, dump: bool = False) -> list[GroundedPredicate]:
         """Top-k predicates whose label/domain/range tokens appear (as
         substrings) in the question, or vice versa — identical ranking
         rule to :meth:`LabelIndex.retrieve` (shared scorer), scored over
-        ``(label, domain, range)`` rather than a single label tuple."""
+        ``(label, domain, range)`` rather than a single label tuple.
+
+        ``dump=True`` (CR-01 fix) bypasses the shared scorer's zero-hit
+        filter, returning every predicate (ranked, real hits first) instead
+        of only the ones that lexically overlap the question — the genuine
+        "dump the whole schema" mode a small-enough TBox needs, which
+        widening ``k`` alone can never achieve (see
+        :func:`_token_substring_retrieve`'s docstring). Default ``False``
+        keeps prior behavior byte-identical."""
         return _token_substring_retrieve(
-            self._predicates, lambda p: (p.label, p.domain, p.range), question, k
+            self._predicates, lambda p: (p.label, p.domain, p.range), question, k, dump=dump
         )
 
     def format_prompt_section(
@@ -256,6 +282,7 @@ class PredicateIndex:
         *,
         header: str,
         instruction: str,
+        dump: bool = False,
     ) -> str:
         """Render a two-tier "known schema predicates" prompt block for
         *question*.
@@ -279,7 +306,7 @@ class PredicateIndex:
         a maliciously-labeled TBox predicate cannot break the
         prompt-block structure (T-07.4-01, extending T-07.3-01).
         """
-        matches = self.retrieve(question, k=k)
+        matches = self.retrieve(question, k=k, dump=dump)
         if not matches:
             return ""
         lines = [header, instruction, ""]
