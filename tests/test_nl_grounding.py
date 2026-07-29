@@ -334,8 +334,8 @@ def test_predicate_renders_iri_localname_not_label() -> None:
     section = PredicateIndex([p]).format_prompt_section(
         "supplier", header="## H", instruction="Use these.", dump=True
     )
-    assert "hasSupplier" in section            # localname surfaced as the identifier
-    assert '"supplier"' in section             # label demoted to a gloss
+    assert "hasSupplier" in section  # localname surfaced as the identifier
+    assert '"supplier"' in section  # label demoted to a gloss
     # the example pattern must use the localname, never the bare label as predicate
     assert "?x hasSupplier <IRI>" in section
     assert "?x supplier <IRI>" not in section
