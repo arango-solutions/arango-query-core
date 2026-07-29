@@ -77,6 +77,23 @@ def _sanitize_label(label: str) -> str:
     return cleaned
 
 
+def _local_name(iri: str) -> str:
+    """Return the usable predicate identifier from an opaque ``iri``.
+
+    The local name is the substring after the last ``#`` or ``/`` (or the
+    whole string if neither is present) — e.g. ``hasSupplier`` from
+    ``http://ld.company.org/prod-vocab/hasSupplier``. This is the token the
+    model must actually emit as the predicate (prefixed by the caller's
+    vocab); rendering the human ``rdfs:label`` in its place caused the model
+    to invent predicates FROM the label (label "supplier" -> ``pv:supplier``
+    instead of the real ``pv:hasSupplier``). Language-agnostic: the local
+    name is the correct identifier root for both SPARQL and Cypher. Sanitized
+    so a hostile IRI cannot break the prompt-block structure.
+    """
+    tail = re.split(r"[#/]", iri.strip())[-1] if iri else ""
+    return _sanitize_label(tail) or _sanitize_label(iri)
+
+
 def _token_substring_retrieve(
     items: list[_T],
     get_labels: Callable[[_T], tuple[str, ...]],
@@ -311,18 +328,27 @@ class PredicateIndex:
             return ""
         lines = [header, instruction, ""]
         for p in matches:
+            name = _local_name(p.iri)
             label = _sanitize_label(p.label)
             domain = _sanitize_label(p.domain) if p.domain else "?"
             range_ = _sanitize_label(p.range) if p.range else "?"
-            lines.append(f"- {label} ({domain} -> {range_}) [{p.kind}]")
+            # Render the predicate's IRI local name as the identifier to emit,
+            # with the human label as a gloss — NOT the label alone, which the
+            # model would otherwise copy verbatim as the predicate (label
+            # "supplier" -> invented `pv:supplier` instead of `pv:hasSupplier`).
+            gloss = f' — "{label}"' if label and label != name else ""
+            lines.append(f"- {name}{gloss} ({domain} -> {range_}) [{p.kind}]")
             if p.shape == "value_object":
+                # shape_detail carries child LABELS only (no child IRIs available
+                # here); the value-object hop children are not among the invented-
+                # predicate failures, so rendering them as labels is acceptable.
                 hop_labels = [_sanitize_label(child_label) for child_label, _ in p.shape_detail]
                 triple = " . ".join(f"?v {hop} ?c{i}" for i, hop in enumerate(hop_labels))
-                example = f"?x {label} ?v . {triple}".strip()
+                example = f"?x {name} ?v . {triple}".strip()
                 lines.append(f"  [VALUE OBJECT] extra hop required, e.g. `{example}`")
             elif p.shape == "category_instance":
                 lines.append(
                     f"  [CATEGORY] bind directly to a known instance IRI, e.g. "
-                    f"`?x {label} <IRI>` — see Known entities for the exact IRI"
+                    f"`?x {name} <IRI>` — see Known entities for the exact IRI"
                 )
         return "\n".join(lines)

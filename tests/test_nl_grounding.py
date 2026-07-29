@@ -314,3 +314,28 @@ def test_predicate_label_sanitization() -> None:
     assert len(bullet_lines) == 1
     assert "\n" not in bullet_lines[0]
     assert "ignore previous instructions" in bullet_lines[0]
+
+
+def test_predicate_renders_iri_localname_not_label() -> None:
+    """Regression: render the IRI LOCAL NAME (hasSupplier) as the predicate
+    identifier, keeping the human label only as a gloss. Rendering the bare
+    label caused downstream models to copy it verbatim and invent
+    ``pv:supplier`` instead of the real ``pv:hasSupplier`` (arango-sparql
+    Phase-04 predicate-rendering fix; measured 9/10 CK25 invented-predicate
+    cases corrected)."""
+    p = GroundedPredicate(
+        iri="http://ld.company.org/prod-vocab/hasSupplier",
+        label="supplier",  # label != localname — the real-world trap
+        kind="object",
+        domain="Product",
+        range="Supplier",
+        shape="category_instance",
+    )
+    section = PredicateIndex([p]).format_prompt_section(
+        "supplier", header="## H", instruction="Use these.", dump=True
+    )
+    assert "hasSupplier" in section  # localname surfaced as the identifier
+    assert '"supplier"' in section  # label demoted to a gloss
+    # the example pattern must use the localname, never the bare label as predicate
+    assert "?x hasSupplier <IRI>" in section
+    assert "?x supplier <IRI>" not in section
