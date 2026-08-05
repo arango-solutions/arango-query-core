@@ -18,6 +18,7 @@ from .providers import (
     split_system_for_anthropic_cache,
 )
 from .seams import GuardrailVerdict, QueryLanguageAdapter, ValidationResult
+from .synthbank import SHAPE_CATALOG, ShapeTemplate
 
 __all__ = [
     "AnthropicProvider",
@@ -36,6 +37,8 @@ __all__ = [
     "PredicateIndex",
     "QueryLanguageAdapter",
     "Retriever",
+    "SHAPE_CATALOG",
+    "ShapeTemplate",
     "ValidationResult",
     "cached_few_shot_index",
     "get_llm_provider",
