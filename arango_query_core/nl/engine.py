@@ -63,6 +63,10 @@ class NLQueryEngine:
     predicates are retrieved per question from the adapter's predicate
     index (seam 7) and rendered AFTER the entity section — same
     post-cache-boundary, per-question dynamic content discipline.
+    ``path_k`` navigation hints are retrieved per question from the
+    adapter's path index (seam 8) and rendered AFTER the predicate
+    section — same post-cache-boundary discipline; the adapter resolves
+    the anchor/target identifiers from its own seam-6/7 state (D-02).
     """
 
     provider: LLMProvider
@@ -70,6 +74,7 @@ class NLQueryEngine:
     few_shot_k: int = 3
     grounding_k: int = 20
     predicate_k: int = 20
+    path_k: int = 5
     max_retries: int = 2
     guardrail_context: dict[str, Any] = field(default_factory=dict)
 
@@ -136,6 +141,11 @@ class NLQueryEngine:
             pred_block = self.adapter.predicate_prompt_section(question, predicates, k=self.predicate_k)
             if pred_block:
                 sections.append(pred_block)
+        paths = self.adapter.path_index()
+        if paths is not None:
+            path_block = self.adapter.path_prompt_section(question, paths, k=self.path_k)
+            if path_block:
+                sections.append(path_block)
         return "\n\n".join(s for s in sections if s)
 
 
