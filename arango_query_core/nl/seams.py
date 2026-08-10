@@ -14,7 +14,8 @@ the engine was carved out of ``arango_cypher.nl2cypher`` (see
 4. the repair rules keyed on validator errors,
 5. the guardrail checks (e.g. tenant-scope AST validation),
 6. the entity/instance grounding index,
-7. the predicate/schema-convention grounding index.
+7. the predicate/schema-convention grounding index,
+8. the relationship-path (class-connectivity) grounding index.
 
 Adapters live NEXT TO their transpilers (``arango_cypher.nl2cypher``,
 ``arango_sparql.nl2sparql``), never in this package: validating a
@@ -31,6 +32,7 @@ from typing import Any, Protocol, runtime_checkable
 
 from .fewshot import FewShotIndex
 from .grounding import LabelIndex, PredicateIndex
+from .pathindex import ClassPathIndex
 
 
 @dataclass
@@ -135,4 +137,22 @@ class QueryLanguageAdapter(Protocol):
         :meth:`predicate_index` returns a non-``None`` index; return the
         empty string to inject nothing. Adapter-owned wording; the
         retrieval/rendering machinery lives in :class:`PredicateIndex`."""
+        ...
+
+    def path_index(self) -> ClassPathIndex | None:
+        """Seam 8 — the pre-built class-connectivity path index for this
+        request's target schema, or ``None`` to run ungrounded (mirrors
+        seams 6/7)."""
+        ...
+
+    def path_prompt_section(self, question: str, index: ClassPathIndex, k: int = 5) -> str:
+        """Seam 8 (renderer) — turn the retrieved path ``index`` into
+        the language-specific navigation-hint prompt block. The engine
+        calls this only when :meth:`path_index` returns a non-``None``
+        index; return the empty string to inject nothing. Unlike seams
+        6/7, this method typically does more than delegate: adapters
+        resolve the anchor classes/targets from their OWN seam-6/7
+        indexes (D-02) before calling :meth:`ClassPathIndex.shortest_paths`.
+        Adapter-owned wording; the retrieval/rendering machinery lives in
+        :class:`ClassPathIndex`."""
         ...

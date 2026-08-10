@@ -7,6 +7,7 @@ from __future__ import annotations
 from typing import Any
 
 from arango_query_core.nl import (
+    ClassPathIndex,
     GroundedEntity,
     GroundedPredicate,
     GuardrailVerdict,
@@ -55,6 +56,9 @@ class FakeAdapter:
         return None
 
     def predicate_index(self):
+        return None
+
+    def path_index(self):
         return None
 
     def validate(self, query: str) -> ValidationResult:
@@ -210,3 +214,65 @@ def test_engine_composes_predicate_block_after_entities() -> None:
     standalone_prompt = adapter.grammar_prompt_section("")
     assert PredicateGroundedFakeAdapter._SENTINEL_PREDICATE_LABEL not in standalone_prompt
     assert "## Known schema predicates" not in standalone_prompt
+
+
+class PathGroundedFakeAdapter(PredicateGroundedFakeAdapter):
+    """PredicateGroundedFakeAdapter + a populated path index (seam 8)."""
+
+    def path_index(self) -> ClassPathIndex | None:
+        return ClassPathIndex(edges=[("hasManager", "Employee", "Manager")], subclass_of=[])
+
+    def path_prompt_section(self, question: str, index: ClassPathIndex, k: int = 5) -> str:
+        return index.format_prompt_section(["Employee"], ["hasManager"], k=k)
+
+
+def test_engine_composes_path_block_after_predicates() -> None:
+    provider = FakeProvider(["SELECT ?s WHERE { ?s ?p ?o }"])
+    adapter = PathGroundedFakeAdapter()
+    engine = NLQueryEngine(provider=provider, adapter=adapter, grounding_k=20, predicate_k=20, path_k=5)
+    engine.generate(
+        f"find the {GroundedFakeAdapter._SENTINEL_LABEL} "
+        f"{PredicateGroundedFakeAdapter._SENTINEL_PREDICATE_LABEL}"
+    )
+    system = provider.calls[0][0]
+    assert "## Known navigation paths" in system
+    # Ordering: ... -> predicates -> paths, all post-cache-boundary.
+    assert system.index("## Known schema predicates") < system.index("## Known navigation paths")
+
+
+class NoneIndexPathAdapter(PredicateGroundedFakeAdapter):
+    """path_index() -> None must append nothing (byte-identical to pre-seam-8)."""
+
+    def path_index(self) -> ClassPathIndex | None:
+        return None
+
+    def path_prompt_section(self, question: str, index: ClassPathIndex, k: int = 5) -> str:
+        raise AssertionError("path_prompt_section must not be called when path_index() is None")
+
+
+def test_engine_path_index_none_appends_nothing() -> None:
+    provider = FakeProvider(["SELECT ?s WHERE { ?s ?p ?o }"])
+    adapter = NoneIndexPathAdapter()
+    engine = NLQueryEngine(provider=provider, adapter=adapter, grounding_k=20, predicate_k=20, path_k=5)
+    engine.generate(f"find the {GroundedFakeAdapter._SENTINEL_LABEL}")
+    system = provider.calls[0][0]
+    assert "## Known navigation paths" not in system
+
+
+class EmptyRenderPathAdapter(PredicateGroundedFakeAdapter):
+    """path_index() non-None but path_prompt_section() -> '' must append nothing."""
+
+    def path_index(self) -> ClassPathIndex | None:
+        return ClassPathIndex(edges=[], subclass_of=[])
+
+    def path_prompt_section(self, question: str, index: ClassPathIndex, k: int = 5) -> str:
+        return ""
+
+
+def test_engine_path_empty_render_appends_nothing() -> None:
+    provider = FakeProvider(["SELECT ?s WHERE { ?s ?p ?o }"])
+    adapter = EmptyRenderPathAdapter()
+    engine = NLQueryEngine(provider=provider, adapter=adapter, grounding_k=20, predicate_k=20, path_k=5)
+    engine.generate(f"find the {GroundedFakeAdapter._SENTINEL_LABEL}")
+    system = provider.calls[0][0]
+    assert "## Known navigation paths" not in system
